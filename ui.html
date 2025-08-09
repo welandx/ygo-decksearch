@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+	<meta charset="UTF-8">
+	<title>卡组搜索</title>
+	<style>
+		body { font-family: Arial, sans-serif; background: #f7f7f7; margin: 0; padding: 0; }
+		.container { max-width: 600px; margin: 40px auto; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px #0001; padding: 32px; }
+		h1 { text-align: center; color: #333; }
+		.search-bar { display: flex; gap: 8px; margin-bottom: 24px; }
+		input[type="text"] { flex: 1; padding: 8px 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 4px; }
+		button { padding: 8px 20px; font-size: 16px; background: #1976d2; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+		button:hover { background: #1565c0; }
+		.results { margin-top: 16px; }
+		.deck-item { background: #f1f8ff; border-radius: 4px; padding: 12px; margin-bottom: 10px; border-left: 4px solid #1976d2; }
+		.error { color: #d32f2f; margin-top: 12px; }
+	</style>
+</head>
+<body>
+	<div class="container">
+		<h1>卡组搜索</h1>
+		<div class="search-bar" style="flex-wrap:wrap;gap:8px 12px;">
+			<input type="text" id="deckName" placeholder="卡组名" style="min-width:120px;" />
+			<input type="text" id="card" placeholder="包含卡片(可逗号分隔)" style="min-width:120px;" />
+			<input type="text" id="setcode" placeholder="字段/系列" style="min-width:100px;" />
+			<input type="text" id="cardName" placeholder="卡片全名" style="min-width:100px;" />
+			<input type="text" id="type" placeholder="类型(如连接怪兽)" style="min-width:100px;" />
+			<input type="text" id="race" placeholder="种族(如龙族)" style="min-width:80px;" />
+			<input type="text" id="attribute" placeholder="属性(如光)" style="min-width:60px;" />
+			<input type="number" id="likes_ge" placeholder="点赞≥" style="width:70px;" min="0" />
+			<input type="number" id="likes_le" placeholder="点赞≤" style="width:70px;" min="0" />
+			<input type="date" id="after_date" placeholder="起始日期" style="width:120px;" />
+			<input type="date" id="before_date" placeholder="截止日期" style="width:120px;" />
+			<select id="order" style="min-width:80px;">
+				<option value="rate">点赞排序</option>
+				<option value="date">更新时间排序</option>
+			</select>
+			<select id="reverse" style="min-width:60px;">
+				<option value="">降序</option>
+				<option value="true">升序</option>
+			</select>
+			<input type="number" id="size" placeholder="每页数量" style="width:70px;" min="1" max="100" />
+			<input type="number" id="start" placeholder="起始索引" style="width:70px;" min="0" />
+			<button onclick="searchDecks()">搜索</button>
+			<button onclick="searchDecks(true)">刷新</button>
+		</div>
+		<div id="loadingBar" style="display:none;margin:10px 0;text-align:center;">
+			<span style="display:inline-block;width:80px;height:8px;background:linear-gradient(90deg,#1976d2 40%,#90caf9 100%);border-radius:4px;animation:loadingBar 1s linear infinite alternate;"></span>
+		</div>
+		<style>
+		@keyframes loadingBar {
+			0% { opacity: 0.5; width: 40px; }
+			100% { opacity: 1; width: 80px; }
+		}
+		</style>
+		<div id="error" class="error"></div>
+		<div id="results" class="results"></div>
+	</div>
+	<script>
+	function formatDate(ts) {
+		if (!ts) return '未知';
+		const d = new Date(Number(ts));
+		if (isNaN(d.getTime())) return '未知';
+		return d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
+	}
+
+	function renderDeckResults(resp) {
+		const resultsDiv = document.getElementById('results');
+		if (!resp.success || !resp.data || !resp.data.list || !resp.data.list.length) {
+			resultsDiv.innerHTML = '<div>未找到相关卡组。</div>';
+			return;
+		}
+		const decks = resp.data.list;
+		resultsDiv.innerHTML = decks.map(deck => `
+			<div class="deck-item">
+				<strong>卡组名：</strong> ${deck.deck_name || ''}<br>
+				<strong>作者：</strong> ${deck.deck_contributor || '未知'}<br>
+				<strong>点赞：</strong> ${deck.deck_like || 0}<br>
+				<strong>上传时间：</strong> ${formatDate(deck.upload_date)}<br>
+				<strong>更新时间：</strong> ${formatDate(deck.update_date)}<br>
+					<button onclick="copyYDK('${deck.deck_id}')">复制YDK</button>
+					<button onclick="downloadYDK('${deck.deck_id}', '${deck.deck_name ? deck.deck_name.replace(/'/g, "\'").replace(/"/g, '\"') : 'deck'}')">下载YDK</button>
+				<details style="margin-top:6px;">
+					<summary>查看YDK文本</summary>
+					<pre id="ydktext-${deck.deck_id}" style="white-space:pre-wrap;word-break:break-all;background:#e3eafc;padding:8px;border-radius:4px;">${deck.deck_ydk ? deck.deck_ydk.replace(/</g,'&lt;') : ''}</pre>
+				</details>
+			</div>
+		`).join('');
+	}
+
+	function searchDecks(forceRefresh = false) {
+		// 获取所有输入参数
+		const getVal = id => document.getElementById(id)?.value?.trim();
+		const deckName = getVal('deckName');
+		const card = getVal('card');
+		const setcode = getVal('setcode');
+		const cardName = getVal('cardName');
+		const type = getVal('type');
+		const race = getVal('race');
+		const attribute = getVal('attribute');
+		const likes_ge = getVal('likes_ge');
+		const likes_le = getVal('likes_le');
+		const after_date = getVal('after_date');
+		const before_date = getVal('before_date');
+		const order = getVal('order');
+		const reverse = getVal('reverse');
+		const size = getVal('size');
+		const start = getVal('start');
+		const resultsDiv = document.getElementById('results');
+		const errorDiv = document.getElementById('error');
+		const loadingBar = document.getElementById('loadingBar');
+		resultsDiv.innerHTML = '';
+		errorDiv.textContent = '';
+		// 只要有一个主要参数即可
+		if (!deckName && !card && !setcode && !cardName && !likes_ge && !likes_le && !after_date && !before_date) {
+			errorDiv.textContent = '请至少输入一个搜索条件';
+			return;
+		}
+		// 构建参数
+		let params = [];
+		if (deckName) params.push('deck_name=' + encodeURIComponent(deckName));
+		if (card) {
+			card.split(',').map(s=>s.trim()).filter(Boolean).forEach(c=>params.push('card=' + encodeURIComponent(c)));
+		}
+		if (setcode) params.push('setcode=' + encodeURIComponent(setcode));
+		if (cardName) params.push('card_name=' + encodeURIComponent(cardName));
+		if (type) params.push('type=' + encodeURIComponent(type));
+		if (race) params.push('race=' + encodeURIComponent(race));
+		if (attribute) params.push('attribute=' + encodeURIComponent(attribute));
+		if (likes_ge) params.push('likes_ge=' + encodeURIComponent(likes_ge));
+		if (likes_le) params.push('likes_le=' + encodeURIComponent(likes_le));
+		if (after_date) params.push('after_date=' + encodeURIComponent(after_date));
+		if (before_date) params.push('before_date=' + encodeURIComponent(before_date));
+		if (order) params.push('order=' + encodeURIComponent(order));
+		if (reverse) params.push('reverse=' + encodeURIComponent(reverse));
+		if (size) params.push('size=' + encodeURIComponent(size));
+		if (start) params.push('start=' + encodeURIComponent(start));
+		const paramStr = params.join('&');
+		// 缓存key用所有参数
+		const cacheKey = 'deck_search_' + paramStr;
+		if (!forceRefresh) {
+			const cached = localStorage.getItem(cacheKey);
+			if (cached) {
+				try {
+					const resp = JSON.parse(cached);
+					renderDeckResults(resp);
+					return;
+				} catch (e) {}
+			}
+		}
+		loadingBar.style.display = '';
+		const url = `https://mddecks.hp1656173638.workers.dev/api/decks/search?${paramStr}`;
+		fetch(url)
+			.then(res => {
+				if (!res.ok) throw new Error('网络错误或API不可用');
+				return res.json();
+			})
+			.then(resp => {
+				localStorage.setItem(cacheKey, JSON.stringify(resp));
+				renderDeckResults(resp);
+			})
+			.catch(err => {
+				errorDiv.textContent = err.message || '发生错误';
+			})
+			.finally(() => {
+				loadingBar.style.display = 'none';
+			});
+	}
+	// 回车快捷搜索，任意输入框按回车都可触发
+	document.querySelectorAll('.search-bar input,.search-bar select').forEach(el=>{
+		el.addEventListener('keydown', function(e) {
+			if (e.key === 'Enter') searchDecks();
+		});
+	});
+	</script>
+</script>
+<script>
+// 复制YDK文本到剪贴板
+function copyYDK(deckId) {
+	const pre = document.getElementById('ydktext-' + deckId);
+	if (!pre) return;
+	const text = pre.innerText;
+	if (navigator.clipboard) {
+		navigator.clipboard.writeText(text).then(() => {
+			alert('已复制到剪贴板');
+		}, () => {
+			alert('复制失败');
+		});
+	} else {
+		// 兼容旧浏览器
+		const textarea = document.createElement('textarea');
+		textarea.value = text;
+		document.body.appendChild(textarea);
+		textarea.select();
+		try {
+			document.execCommand('copy');
+			alert('已复制到剪贴板');
+		} catch (err) {
+			alert('复制失败');
+		}
+		document.body.removeChild(textarea);
+	}
+}
+// 下载YDK文件
+function downloadYDK(deckId, deckName) {
+	const pre = document.getElementById('ydktext-' + deckId);
+	if (!pre) return;
+	const text = pre.innerText;
+	const blob = new Blob([text], {type: 'text/plain'});
+	const a = document.createElement('a');
+	a.href = URL.createObjectURL(blob);
+	console.log(a);
+	a.download = deckName + '.ydk';
+	document.body.appendChild(a);
+	a.click();
+	document.body.removeChild(a);
+	URL.revokeObjectURL(a.href);
+}
+</script>
+</body>
+</html>
