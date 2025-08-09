@@ -78,10 +78,10 @@
 				<strong>点赞：</strong> ${deck.deck_like || 0}<br>
 				<strong>上传时间：</strong> ${formatDate(deck.upload_date)}<br>
 				<strong>更新时间：</strong> ${formatDate(deck.update_date)}<br>
-					<button onclick="copyYDK('${deck.deck_id}')">复制YDK</button>
-					<button onclick="downloadYDK('${deck.deck_id}', '${deck.deck_name ? deck.deck_name.replace(/'/g, "\'").replace(/"/g, '\"') : 'deck'}')">下载YDK</button>
 				<details style="margin-top:6px;">
 					<summary>查看YDK文本</summary>
+					<button onclick="copyYDK('${deck.deck_id}')">复制YDK</button>
+					<button onclick="downloadYDK('${deck.deck_id}', '${deck.deck_name ? deck.deck_name.replace(/'/g, "\'").replace(/"/g, '\"') : 'deck'}')">下载YDK</button>
 					<pre id="ydktext-${deck.deck_id}" style="white-space:pre-wrap;word-break:break-all;background:#e3eafc;padding:8px;border-radius:4px;">${deck.deck_ydk ? deck.deck_ydk.replace(/</g,'&lt;') : ''}</pre>
 				</details>
 			</div>
@@ -209,7 +209,6 @@ function downloadYDK(deckId, deckName) {
 	const blob = new Blob([text], {type: 'text/plain'});
 	const a = document.createElement('a');
 	a.href = URL.createObjectURL(blob);
-	console.log(a);
 	a.download = deckName + '.ydk';
 	document.body.appendChild(a);
 	a.click();
